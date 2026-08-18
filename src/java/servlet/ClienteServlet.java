@@ -1,0 +1,127 @@
+package servlet;
+
+import Controlador.Conexion;
+import Modelo.Usuarios;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@WebServlet("/ClienteServlet")
+public class ClienteServlet extends HttpServlet {
+
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        HttpSession session = request.getSession(false);
+        if (session == null || session.getAttribute("usuario") == null
+                || !"cliente".equals(session.getAttribute("rol"))) {
+            response.sendRedirect(request.getContextPath() + "/Vista/Login.jsp");
+            return;
+        }
+
+        int idUsuario;
+        try {
+            idUsuario = Integer.parseInt(String.valueOf(session.getAttribute("idUsuario")));
+        } catch (NumberFormatException e) {
+            response.sendRedirect(request.getContextPath() + "/Vista/Login.jsp");
+            return;
+        }
+        boolean cuentaActiva = false;
+        List<Map<String, Object>> membresias = new ArrayList<>();
+        List<Map<String, Object>> productos = new ArrayList<>();
+
+        try (Connection con = Conexion.getConnect()) {
+            cuentaActiva = cargarEstadoUsuario(con, session, idUsuario);
+            membresias = listarMembresias(con);
+            productos = listarProductos(con);
+        } catch (Exception e) {
+            request.setAttribute("errorCliente", "No se pudo cargar el panel de cliente: " + e.getMessage());
+        }
+
+        request.setAttribute("clienteDatosCargados", true);
+        request.setAttribute("cuentaActiva", cuentaActiva);
+        request.setAttribute("membresias", membresias);
+        request.setAttribute("productos", productos);
+        request.getRequestDispatcher("/Vista/Cliente.jsp").forward(request, response);
+    }
+
+    private boolean cargarEstadoUsuario(Connection con, HttpSession session, int idUsuario) throws SQLException {
+        String sql = "SELECT id_membresias, vencimiento FROM usuarios WHERE id_usuarios = ?";
+
+        try (PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setInt(1, idUsuario);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return false;
+                }
+
+                int idMembresia = rs.getInt("id_membresias");
+                Date vencimiento = rs.getDate("vencimiento");
+
+                Usuarios usuario = (Usuarios) session.getAttribute("usuario");
+                usuario.setId_membresias(rs.wasNull() ? 0 : idMembresia);
+                usuario.setVencimiento(vencimiento == null ? null : vencimiento.toString());
+                session.setAttribute("usuario", usuario);
+
+                return idMembresia > 0
+                        && vencimiento != null
+                        && !vencimiento.toLocalDate().isBefore(LocalDate.now());
+            }
+        }
+    }
+
+    private List<Map<String, Object>> listarMembresias(Connection con) throws SQLException {
+        List<Map<String, Object>> lista = new ArrayList<>();
+        String sql = "SELECT id_membresias, tipo, precio, duracion_dias FROM membresias ORDER BY id_membresias";
+
+        try (PreparedStatement ps = con.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                Map<String, Object> fila = new HashMap<>();
+                fila.put("id", rs.getInt("id_membresias"));
+                fila.put("nombre", rs.getString("tipo"));
+                fila.put("precio", rs.getDouble("precio"));
+                fila.put("duracion_dias", rs.getInt("duracion_dias"));
+                lista.add(fila);
+            }
+        }
+
+        return lista;
+    }
+
+    List<Map<String, Object>> listarProductos(Connection con) throws SQLException {
+        List<Map<String, Object>> lista = new ArrayList<>();
+        String sql = "SELECT id_productos, nombre, precio FROM productos ORDER BY id_productos";
+
+        try (PreparedStatement ps = con.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                Map<String, Object> fila = new HashMap<>();
+                fila.put("id", rs.getInt("id_productos"));
+                fila.put("nombre", rs.getString("nombre"));
+                fila.put("precio", rs.getDouble("precio"));
+                lista.add(fila);
+            }
+        }
+
+        return lista;
+    }
+}
